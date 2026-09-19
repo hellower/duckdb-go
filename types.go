@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"reflect"
 	"strings"
@@ -47,6 +48,8 @@ var (
 	reflectTypeAny       = reflect.TypeFor[any]()
 	reflectTypeUUID      = reflect.TypeFor[UUID]()
 	reflectTypeBit       = reflect.TypeFor[Bit]()
+	timestampInfinity    = time.UnixMicro(math.MaxInt64).UTC()
+	timestampNegInfinity = time.UnixMicro(math.MinInt64 + 1).UTC()
 )
 
 type numericType interface {
@@ -777,6 +780,14 @@ func getTSTicks(t Type, val any) (int64, error) {
 
 	year := ti.Year()
 	if t == TYPE_TIMESTAMP || t == TYPE_TIMESTAMP_TZ {
+		// DuckDB exposes infinite timestamps as these exact time.Time instants.
+		// Preserve them before applying the finite calendar range check.
+		if ti.Equal(timestampInfinity) {
+			return math.MaxInt64, nil
+		}
+		if ti.Equal(timestampNegInfinity) {
+			return math.MinInt64 + 1, nil
+		}
 		if year < -290307 || year > 294246 {
 			return 0, conversionError(year, -290307, 294246)
 		}
