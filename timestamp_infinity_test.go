@@ -31,6 +31,15 @@ func TestGetTSTicksTimestampInfinity(t *testing.T) {
 		{name: "timestamp_ms negative infinity", typ: TYPE_TIMESTAMP_MS, value: negative, want: math.MinInt64 + 1},
 		{name: "timestamp_ns positive infinity", typ: TYPE_TIMESTAMP_NS, value: positive, want: math.MaxInt64},
 		{name: "timestamp_ns negative infinity", typ: TYPE_TIMESTAMP_NS, value: negative, want: math.MinInt64 + 1},
+		{name: "timestamp_s native positive infinity", typ: TYPE_TIMESTAMP_S, value: timestampSInfinity, want: math.MaxInt64},
+		{name: "timestamp_s native negative infinity", typ: TYPE_TIMESTAMP_S, value: timestampSNegInfinity, want: math.MinInt64 + 1},
+		{name: "timestamp_ms native positive infinity", typ: TYPE_TIMESTAMP_MS, value: timestampMSInfinity, want: math.MaxInt64},
+		{name: "timestamp_ms native negative infinity", typ: TYPE_TIMESTAMP_MS, value: timestampMSNegInfinity, want: math.MinInt64 + 1},
+		{name: "timestamp_ns native positive infinity", typ: TYPE_TIMESTAMP_NS, value: timestampNSInfinity, want: math.MaxInt64},
+		{name: "timestamp_ns native negative infinity", typ: TYPE_TIMESTAMP_NS, value: timestampNSNegInfinity, want: math.MinInt64 + 1},
+		{name: "timestamp_s native positive neighbor", typ: TYPE_TIMESTAMP_S, value: timestampSInfinity.Add(-time.Second), want: math.MaxInt64 - 1},
+		{name: "timestamp_ms native positive neighbor", typ: TYPE_TIMESTAMP_MS, value: timestampMSInfinity.Add(-time.Millisecond), want: math.MaxInt64 - 1},
+		{name: "timestamp_ns native positive neighbor", typ: TYPE_TIMESTAMP_NS, value: timestampNSInfinity.Add(-time.Nanosecond), want: math.MaxInt64 - 1},
 		{name: "same positive instant in another location", typ: TYPE_TIMESTAMP_TZ, value: positive.In(time.FixedZone("offset", 9*60*60)), want: math.MaxInt64},
 		{name: "positive sentinel minus one microsecond", typ: TYPE_TIMESTAMP, value: positive.Add(-time.Microsecond), wantErr: true},
 		{name: "negative sentinel plus one microsecond", typ: TYPE_TIMESTAMP, value: negative.Add(time.Microsecond), wantErr: true},
@@ -95,6 +104,8 @@ func TestTimestampInfinityAppenderRoundTrip(t *testing.T) {
 
 	require.NoError(t, a.AppendRow(timestampInfinity, timestampInfinity, timestampInfinity, timestampInfinity, timestampInfinity))
 	require.NoError(t, a.AppendRow(timestampNegInfinity, timestampNegInfinity, timestampNegInfinity, timestampNegInfinity, timestampNegInfinity))
+	require.NoError(t, a.AppendRow(timestampInfinity, timestampInfinity, timestampSInfinity, timestampMSInfinity, timestampNSInfinity))
+	require.NoError(t, a.AppendRow(timestampNegInfinity, timestampNegInfinity, timestampSNegInfinity, timestampMSNegInfinity, timestampNSNegInfinity))
 	require.NoError(t, a.Flush())
 
 	tests := []struct {
@@ -102,8 +113,8 @@ func TestTimestampInfinityAppenderRoundTrip(t *testing.T) {
 		literal string
 		want    int
 	}{
-		{name: "positive infinity", literal: "infinity", want: 1},
-		{name: "negative infinity", literal: "-infinity", want: 1},
+		{name: "positive infinity", literal: "infinity", want: 2},
+		{name: "negative infinity", literal: "-infinity", want: 2},
 	}
 
 	for _, tt := range tests {
