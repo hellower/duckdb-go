@@ -25,6 +25,12 @@ func TestGetTSTicksTimestampInfinity(t *testing.T) {
 		{name: "timestamp negative infinity", typ: TYPE_TIMESTAMP, value: negative, want: math.MinInt64 + 1},
 		{name: "timestamptz positive infinity", typ: TYPE_TIMESTAMP_TZ, value: positive, want: math.MaxInt64},
 		{name: "timestamptz negative infinity", typ: TYPE_TIMESTAMP_TZ, value: negative, want: math.MinInt64 + 1},
+		{name: "timestamp_s positive infinity", typ: TYPE_TIMESTAMP_S, value: positive, want: math.MaxInt64},
+		{name: "timestamp_s negative infinity", typ: TYPE_TIMESTAMP_S, value: negative, want: math.MinInt64 + 1},
+		{name: "timestamp_ms positive infinity", typ: TYPE_TIMESTAMP_MS, value: positive, want: math.MaxInt64},
+		{name: "timestamp_ms negative infinity", typ: TYPE_TIMESTAMP_MS, value: negative, want: math.MinInt64 + 1},
+		{name: "timestamp_ns positive infinity", typ: TYPE_TIMESTAMP_NS, value: positive, want: math.MaxInt64},
+		{name: "timestamp_ns negative infinity", typ: TYPE_TIMESTAMP_NS, value: negative, want: math.MinInt64 + 1},
 		{name: "same positive instant in another location", typ: TYPE_TIMESTAMP_TZ, value: positive.In(time.FixedZone("offset", 9*60*60)), want: math.MaxInt64},
 		{name: "positive sentinel minus one microsecond", typ: TYPE_TIMESTAMP, value: positive.Add(-time.Microsecond), wantErr: true},
 		{name: "negative sentinel plus one microsecond", typ: TYPE_TIMESTAMP, value: negative.Add(time.Microsecond), wantErr: true},
@@ -58,6 +64,12 @@ func TestTimestampInfinityParameterRoundTrip(t *testing.T) {
 		{name: "timestamp negative infinity", typeName: "TIMESTAMP", value: timestampNegInfinity, want: "-infinity"},
 		{name: "timestamptz positive infinity", typeName: "TIMESTAMPTZ", value: timestampInfinity, want: "infinity"},
 		{name: "timestamptz negative infinity", typeName: "TIMESTAMPTZ", value: timestampNegInfinity, want: "-infinity"},
+		{name: "timestamp_s positive infinity", typeName: "TIMESTAMP_S", value: timestampInfinity, want: "infinity"},
+		{name: "timestamp_s negative infinity", typeName: "TIMESTAMP_S", value: timestampNegInfinity, want: "-infinity"},
+		{name: "timestamp_ms positive infinity", typeName: "TIMESTAMP_MS", value: timestampInfinity, want: "infinity"},
+		{name: "timestamp_ms negative infinity", typeName: "TIMESTAMP_MS", value: timestampNegInfinity, want: "-infinity"},
+		{name: "timestamp_ns positive infinity", typeName: "TIMESTAMP_NS", value: timestampInfinity, want: "infinity"},
+		{name: "timestamp_ns negative infinity", typeName: "TIMESTAMP_NS", value: timestampNegInfinity, want: "-infinity"},
 	}
 
 	for _, tt := range tests {
@@ -71,11 +83,18 @@ func TestTimestampInfinityParameterRoundTrip(t *testing.T) {
 }
 
 func TestTimestampInfinityAppenderRoundTrip(t *testing.T) {
-	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `CREATE TABLE test (ts TIMESTAMP, tstz TIMESTAMPTZ)`)
+	c, db, conn, a := prepareAppender(t, appenderTypeDefault, `
+		CREATE TABLE test (
+			ts TIMESTAMP,
+			tstz TIMESTAMPTZ,
+			ts_s TIMESTAMP_S,
+			ts_ms TIMESTAMP_MS,
+			ts_ns TIMESTAMP_NS
+		)`)
 	defer cleanupAppender(t, c, db, conn, a)
 
-	require.NoError(t, a.AppendRow(timestampInfinity, timestampInfinity))
-	require.NoError(t, a.AppendRow(timestampNegInfinity, timestampNegInfinity))
+	require.NoError(t, a.AppendRow(timestampInfinity, timestampInfinity, timestampInfinity, timestampInfinity, timestampInfinity))
+	require.NoError(t, a.AppendRow(timestampNegInfinity, timestampNegInfinity, timestampNegInfinity, timestampNegInfinity, timestampNegInfinity))
 	require.NoError(t, a.Flush())
 
 	tests := []struct {
@@ -92,7 +111,11 @@ func TestTimestampInfinityAppenderRoundTrip(t *testing.T) {
 			var got int
 			err := db.QueryRowContext(context.Background(), `
 				SELECT count(*) FROM test
-				WHERE ts = CAST(? AS TIMESTAMP) AND tstz = CAST(? AS TIMESTAMPTZ)`, tt.literal, tt.literal).Scan(&got)
+				WHERE ts = CAST(? AS TIMESTAMP)
+				  AND tstz = CAST(? AS TIMESTAMPTZ)
+				  AND ts_s = CAST(? AS TIMESTAMP_S)
+				  AND ts_ms = CAST(? AS TIMESTAMP_MS)
+				  AND ts_ns = CAST(? AS TIMESTAMP_NS)`, tt.literal, tt.literal, tt.literal, tt.literal, tt.literal).Scan(&got)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})

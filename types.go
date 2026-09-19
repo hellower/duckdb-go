@@ -771,6 +771,16 @@ func getTSTicks(t Type, val any) (int64, error) {
 		return 0, err
 	}
 
+	// DuckDB exposes infinite timestamps of every precision as these exact
+	// time.Time instants. Preserve them before applying unit conversion or
+	// finite calendar range checks.
+	if ti.Equal(timestampInfinity) {
+		return math.MaxInt64, nil
+	}
+	if ti.Equal(timestampNegInfinity) {
+		return math.MinInt64 + 1, nil
+	}
+
 	if t == TYPE_TIMESTAMP_S {
 		return ti.Unix(), nil
 	}
@@ -780,14 +790,6 @@ func getTSTicks(t Type, val any) (int64, error) {
 
 	year := ti.Year()
 	if t == TYPE_TIMESTAMP || t == TYPE_TIMESTAMP_TZ {
-		// DuckDB exposes infinite timestamps as these exact time.Time instants.
-		// Preserve them before applying the finite calendar range check.
-		if ti.Equal(timestampInfinity) {
-			return math.MaxInt64, nil
-		}
-		if ti.Equal(timestampNegInfinity) {
-			return math.MinInt64 + 1, nil
-		}
 		if year < -290307 || year > 294246 {
 			return 0, conversionError(year, -290307, 294246)
 		}
