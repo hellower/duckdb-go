@@ -24,38 +24,32 @@ import (
 
 // Pre-computed reflect type values to avoid repeated allocations.
 var (
-	reflectTypeBool        = reflect.TypeFor[bool]()
-	reflectTypeInt8        = reflect.TypeFor[int8]()
-	reflectTypeInt16       = reflect.TypeFor[int16]()
-	reflectTypeInt32       = reflect.TypeFor[int32]()
-	reflectTypeInt64       = reflect.TypeFor[int64]()
-	reflectTypeUint8       = reflect.TypeFor[uint8]()
-	reflectTypeUint16      = reflect.TypeFor[uint16]()
-	reflectTypeUint32      = reflect.TypeFor[uint32]()
-	reflectTypeUint64      = reflect.TypeFor[uint64]()
-	reflectTypeFloat32     = reflect.TypeFor[float32]()
-	reflectTypeFloat64     = reflect.TypeFor[float64]()
-	reflectTypeTime        = reflect.TypeFor[time.Time]()
-	reflectTypeInterval    = reflect.TypeFor[Interval]()
-	reflectTypeBigInt      = reflect.TypeFor[*big.Int]()
-	reflectTypeString      = reflect.TypeFor[string]()
-	reflectTypeBytes       = reflect.TypeFor[[]byte]()
-	reflectTypeDecimal     = reflect.TypeFor[Decimal]()
-	reflectTypeSliceAny    = reflect.TypeFor[[]any]()
-	reflectTypeMapString   = reflect.TypeFor[map[string]any]()
-	reflectTypeMap         = reflect.TypeFor[OrderedMap]()
-	reflectTypeUnion       = reflect.TypeFor[Union]()
-	reflectTypeAny         = reflect.TypeFor[any]()
-	reflectTypeUUID        = reflect.TypeFor[UUID]()
-	reflectTypeBit         = reflect.TypeFor[Bit]()
-	timestampInfinity      = time.UnixMicro(math.MaxInt64).UTC()
-	timestampNegInfinity   = time.UnixMicro(math.MinInt64 + 1).UTC()
-	timestampSInfinity     = time.Unix(math.MaxInt64, 0).UTC()
-	timestampSNegInfinity  = time.Unix(math.MinInt64+1, 0).UTC()
-	timestampMSInfinity    = time.UnixMilli(math.MaxInt64).UTC()
-	timestampMSNegInfinity = time.UnixMilli(math.MinInt64 + 1).UTC()
-	timestampNSInfinity    = time.Unix(0, math.MaxInt64).UTC()
-	timestampNSNegInfinity = time.Unix(0, math.MinInt64+1).UTC()
+	reflectTypeBool      = reflect.TypeFor[bool]()
+	reflectTypeInt8      = reflect.TypeFor[int8]()
+	reflectTypeInt16     = reflect.TypeFor[int16]()
+	reflectTypeInt32     = reflect.TypeFor[int32]()
+	reflectTypeInt64     = reflect.TypeFor[int64]()
+	reflectTypeUint8     = reflect.TypeFor[uint8]()
+	reflectTypeUint16    = reflect.TypeFor[uint16]()
+	reflectTypeUint32    = reflect.TypeFor[uint32]()
+	reflectTypeUint64    = reflect.TypeFor[uint64]()
+	reflectTypeFloat32   = reflect.TypeFor[float32]()
+	reflectTypeFloat64   = reflect.TypeFor[float64]()
+	reflectTypeTime      = reflect.TypeFor[time.Time]()
+	reflectTypeInterval  = reflect.TypeFor[Interval]()
+	reflectTypeBigInt    = reflect.TypeFor[*big.Int]()
+	reflectTypeString    = reflect.TypeFor[string]()
+	reflectTypeBytes     = reflect.TypeFor[[]byte]()
+	reflectTypeDecimal   = reflect.TypeFor[Decimal]()
+	reflectTypeSliceAny  = reflect.TypeFor[[]any]()
+	reflectTypeMapString = reflect.TypeFor[map[string]any]()
+	reflectTypeMap       = reflect.TypeFor[OrderedMap]()
+	reflectTypeUnion     = reflect.TypeFor[Union]()
+	reflectTypeAny       = reflect.TypeFor[any]()
+	reflectTypeUUID      = reflect.TypeFor[UUID]()
+	reflectTypeBit       = reflect.TypeFor[Bit]()
+	timestampInfinity    = time.UnixMicro(math.MaxInt64).UTC()
+	timestampNegInfinity = time.UnixMicro(math.MinInt64 + 1).UTC()
 )
 
 type numericType interface {
@@ -772,18 +766,23 @@ func castToTime(val any) (time.Time, error) {
 }
 
 func getTSTicks(t Type, val any) (int64, error) {
+	if infinity, ok := val.(TimestampInfinity); ok {
+		if t != TYPE_TIMESTAMP && t != TYPE_TIMESTAMP_TZ {
+			return 0, fmt.Errorf("duckdb: timestamp infinity is not supported for %s", typeName(t))
+		}
+		switch infinity {
+		case TimestampPosInfinity:
+			return math.MaxInt64, nil
+		case TimestampNegInfinity:
+			return math.MinInt64 + 1, nil
+		default:
+			return 0, fmt.Errorf("duckdb: invalid timestamp infinity marker %d", infinity)
+		}
+	}
+
 	ti, err := castToTime(val)
 	if err != nil {
 		return 0, err
-	}
-
-	// The microsecond sentinel is also the canonical value used by clients
-	// that do not expose DuckDB's target precision.
-	if ti.Equal(timestampInfinity) {
-		return math.MaxInt64, nil
-	}
-	if ti.Equal(timestampNegInfinity) {
-		return math.MinInt64 + 1, nil
 	}
 
 	if t == TYPE_TIMESTAMP_S {
@@ -795,6 +794,14 @@ func getTSTicks(t Type, val any) (int64, error) {
 
 	year := ti.Year()
 	if t == TYPE_TIMESTAMP || t == TYPE_TIMESTAMP_TZ {
+		// These are the exact time.Time values returned when the same target
+		// types are scanned. Wider target precisions must keep them finite.
+		if ti.Equal(timestampInfinity) {
+			return math.MaxInt64, nil
+		}
+		if ti.Equal(timestampNegInfinity) {
+			return math.MinInt64 + 1, nil
+		}
 		if year < -290307 || year > 294246 {
 			return 0, conversionError(year, -290307, 294246)
 		}
@@ -802,12 +809,6 @@ func getTSTicks(t Type, val any) (int64, error) {
 	}
 
 	// TYPE_TIMESTAMP_NS:
-	if ti.Equal(timestampNSInfinity) {
-		return math.MaxInt64, nil
-	}
-	if ti.Equal(timestampNSNegInfinity) {
-		return math.MinInt64 + 1, nil
-	}
 	if year < 1678 || year > 2262 {
 		return 0, conversionError(year, -290307, 294246)
 	}
