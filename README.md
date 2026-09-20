@@ -1,5 +1,130 @@
 # Go SQL Driver For [DuckDB](https://github.com/duckdb/duckdb)
 
+> [!IMPORTANT]
+> **이 저장소는 [`duckdb/duckdb-go`](https://github.com/duckdb/duckdb-go)의 일반 배포용 미러가 아니라, GooseDB가 필요한 미출시 수정만 고정해서 사용하는 임시 fork입니다.**
+>
+> GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.5`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
+
+## GooseDB fork 안내
+
+### 한눈에 보는 차이
+
+이 fork의 권장 태그 `v2.10505.1-panicfix.5`는 업스트림 `v2.10505.0`에 아래 두 동작 수정만 누적한 판본입니다.
+
+| 구분 | 업스트림 `v2.10505.0` | 이 fork `v2.10505.1-panicfix.5` |
+|---|---|---|
+| 기반 DuckDB | `v1.5.5` | 동일 |
+| Go bindings | `v0.10505.0` | 동일 |
+| 모듈/import 경로 | `github.com/duckdb/duckdb-go/v2` | 동일 |
+| panic 이후 context interrupter | 정리 코드에 도달하지 못하면 goroutine이 남을 수 있음 | `defer`에서 종료 신호를 보내고 goroutine 종료까지 대기 |
+| `TIMESTAMP`/`TIMESTAMPTZ` infinity 재입력 | 조회된 infinity `time.Time`을 다시 parameter/Appender로 쓰면 유한 연도 범위 검사에서 거부될 수 있음 | 조회값 왕복과 명시적 `TimestampPosInfinity`/`TimestampNegInfinity` 입력을 보존 |
+| `TIMESTAMP_S`/`TIMESTAMP_MS`/`TIMESTAMP_NS` | 별도 명시적 infinity marker 없음 | marker를 의도적으로 거부하여 같은 `time.Time` instant를 유한값으로 유지 |
+
+전체 순변경은 [태그 비교](https://github.com/hellower/duckdb-go/compare/v2.10505.0...v2.10505.1-panicfix.5) 기준 **5 commits, 6 files, +244/-11 lines**입니다. DuckDB 엔진, bindings, `go.mod`, `go.sum`은 바꾸지 않았습니다.
+
+### 수정 1: panic 뒤에 남는 interrupter goroutine 종료
+
+업스트림 `runWithCtxInterrupt`는 감싼 함수가 정상 반환한 뒤에만 `done`을 닫고 interrupter goroutine을 기다렸습니다. 감싼 함수가 panic하면 이 정리 구간을 건너뛰므로, 호출자가 panic을 복구한 뒤 같은 연결을 계속 사용할 때 남은 goroutine이 다음 질의를 interrupt할 수 있습니다. 연결이 닫힌 뒤에도 해제된 native handle에 `duckdb_interrupt`를 호출하면 프로세스 crash로 이어질 수 있습니다.
+
+fork는 정리 동작을 `defer`로 옮겨 다음 계약을 보장합니다.
+
+- 감싼 함수의 panic은 원래대로 호출자에게 전파합니다.
+- panic 전후와 context cancel 순서에 관계없이 `done`을 닫습니다.
+- interrupter goroutine이 실제로 끝날 때까지 기다린 뒤 연결 사용권을 반환합니다.
+- 회귀 테스트는 cancel 전 panic과 cancel 후 panic을 각각 검증합니다.
+
+이 수정의 업스트림 제안은 [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182)입니다. 2026-09-20 확인 기준 아직 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
+
+### 수정 2: timestamp infinity의 손실 없는 쓰기/왕복
+
+DuckDB의 `TIMESTAMP`와 `TIMESTAMPTZ` infinity를 Go로 읽으면 드라이버는 극값에 해당하는 `time.Time`을 반환합니다. 업스트림 `getTSTicks`는 그 값을 다시 쓸 때 먼저 유한 timestamp 연도 범위를 검사하므로, 다음과 같은 read → write 왕복이 실패할 수 있습니다.
+
+- `database/sql` parameter binding
+- DuckDB Appender
+- PostgreSQL 호환 프로토콜처럼 infinity를 별도 sentinel로 전달하는 상위 계층
+
+fork는 두 입력 경로를 구분합니다.
+
+1. `TIMESTAMP`/`TIMESTAMPTZ`에서 실제로 scan된 정확한 양·음 infinity `time.Time`은 DuckDB sentinel tick으로 되돌립니다.
+2. 상위 프로토콜이 유한 시각과 infinity를 모호하지 않게 구분할 수 있도록 공개 타입 `TimestampInfinity`와 상수 `TimestampPosInfinity`, `TimestampNegInfinity`를 제공합니다.
+
+명시적 marker는 `TIMESTAMP`와 `TIMESTAMPTZ`에만 허용합니다. 초·밀리초·나노초 정밀도 타입에서는 동일한 Go instant가 정상적인 유한값일 수 있으므로, `TIMESTAMP_S`, `TIMESTAMP_MS`, `TIMESTAMP_NS`에 marker를 적용하면 오류를 반환합니다. 이 제한은 유한값을 infinity로 잘못 바꾸는 충돌을 막기 위한 계약입니다.
+
+예시:
+
+```go
+_, err := db.Exec(
+	"INSERT INTO events (occurred_at) VALUES (?)",
+	duckdb.TimestampPosInfinity,
+)
+```
+
+Appender에도 같은 marker를 전달할 수 있습니다.
+
+```go
+err := appender.AppendRow(duckdb.TimestampNegInfinity)
+```
+
+### 태그 계보
+
+모든 `panicfix` 태그는 업스트림 `v2.10505.0`에서 갈라진 누적 태그입니다.
+
+| 태그 | 추가된 내용 | 사용 권장 여부 |
+|---|---|---|
+| `v2.10505.1-panicfix.1` | interrupter panic cleanup | timestamp infinity 수정이 필요 없는 기존 사용자만 |
+| `v2.10505.1-panicfix.2` | microsecond timestamp infinity 쓰기 보존의 최초 구현 | 중간 태그 |
+| `v2.10505.1-panicfix.3` | 모든 timestamp 정밀도로 판정 범위를 넓힌 중간 설계 | 중간 태그 |
+| `v2.10505.1-panicfix.4` | 정밀도별 native sentinel 왕복을 추가한 중간 설계 | 중간 태그 |
+| `v2.10505.1-panicfix.5` | 명시적 protocol marker를 도입하고 유한값과의 충돌을 제거한 현재 계약 | **권장** |
+
+새 소비자는 중간 태그를 순서대로 적용할 필요가 없습니다. 최종 누적 태그인 `v2.10505.1-panicfix.5`만 고정하십시오.
+
+### Go 모듈에 적용하는 방법
+
+fork도 원래 module path를 유지하므로 애플리케이션의 import 문은 바꾸지 않습니다.
+
+```go
+import duckdb "github.com/duckdb/duckdb-go/v2"
+```
+
+`go.mod`에서 업스트림 요구사항을 fork 태그로 치환합니다.
+
+```mod
+require github.com/duckdb/duckdb-go/v2 v2.10505.0
+
+replace github.com/duckdb/duckdb-go/v2 v2.10505.0 => github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.5
+```
+
+그다음 `go mod tidy`를 실행하고 `go.sum`에 `github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.5`가 기록됐는지 확인합니다. `main`, branch 이름, commit pseudo-version 대신 위 태그를 사용해야 재현 가능한 빌드가 됩니다.
+
+### 검증 범위
+
+fork가 추가한 회귀 테스트는 다음을 직접 확인합니다.
+
+- panic이 cancel 전/후에 발생해도 interrupter가 남지 않는지
+- scan으로 얻은 양·음 infinity를 parameter와 Appender로 왕복할 수 있는지
+- 명시적 양·음 infinity marker가 `TIMESTAMP`와 `TIMESTAMPTZ`에서 보존되는지
+- 인접한 유한 경계값이 infinity로 오인되지 않는지
+- 더 넓은 정밀도 타입에서 marker가 명시적으로 거부되는지
+
+태그 자체를 확인하려면 다음 표적 테스트를 실행합니다.
+
+```sh
+git checkout v2.10505.1-panicfix.5
+go test -count=1 -run '^(TestRunWithCtxInterrupt_|TestGetTSTicksTimestampInfinity|TestTimestampInfinity)' ./...
+```
+
+### fork 제거 조건
+
+이 fork는 영구적인 독자 배포판을 목표로 하지 않습니다. 아래 조건을 모두 만족하면 `replace`를 제거하고 업스트림 정식 태그로 복귀합니다.
+
+1. 두 수정과 동등한 구현이 업스트림에 merge됩니다.
+2. 그 구현이 포함된 안정 태그가 발행됩니다.
+3. GooseDB의 parameter binding, Appender, COPY BINARY timestamp infinity 회귀 테스트가 그 태그에서 통과합니다.
+4. `go.mod`의 `replace` 제거와 함께 정적 DuckDB bindings/번들 좌표의 호환성을 다시 검증합니다.
+
+위 조건 전에는 “업스트림 `main`에 코드가 보인다”는 사실만으로 이 fork를 제거하지 않습니다. 소비자는 commit이 아니라 재현 가능한 정식 태그와 전체 런타임 검증을 기준으로 전환해야 합니다.
+
 ![Tests status](https://github.com/duckdb/duckdb-go/actions/workflows/tests.yaml/badge.svg)
 [![GoDoc](https://godoc.org/github.com/duckdb/duckdb-go/v2?status.svg)](https://pkg.go.dev/github.com/duckdb/duckdb-go/v2)
 
