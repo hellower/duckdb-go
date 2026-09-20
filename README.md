@@ -4,6 +4,8 @@
 > **이 저장소는 [`duckdb/duckdb-go`](https://github.com/duckdb/duckdb-go)의 일반 배포용 미러가 아니라, GooseDB가 필요한 미출시 수정만 고정해서 사용하는 임시 fork입니다.**
 >
 > GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.5`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
+>
+> **업스트림 제출 PR: [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182) — `fix: stop the interrupter goroutine when the wrapped call panics`** (2026-09-20 확인 기준 open)
 
 ## GooseDB fork 안내
 
