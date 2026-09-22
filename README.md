@@ -3,17 +3,17 @@
 > [!IMPORTANT]
 > **이 저장소는 [`duckdb/duckdb-go`](https://github.com/duckdb/duckdb-go)의 일반 배포용 미러가 아니라, GooseDB가 필요한 미출시 수정만 고정해서 사용하는 임시 fork입니다.**
 >
-> GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.5`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
+> GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.6`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
 >
-> **업스트림 제출 PR: [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182) — `fix: stop the interrupter goroutine when the wrapped call panics`** (2026-09-20 확인 기준 open)
+> **업스트림 제출 PR: [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182) — `fix: stop the interrupter goroutine when the wrapped call panics`, [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184) — `Preserve logical type aliases in TypeInfo`** (2026-09-22 확인 기준 둘 다 open)
 
 ## GooseDB fork 안내
 
 ### 한눈에 보는 차이
 
-이 fork의 권장 태그 `v2.10505.1-panicfix.5`는 업스트림 `v2.10505.0`에 아래 두 동작 수정만 누적한 판본입니다.
+이 fork의 권장 태그 `v2.10505.1-panicfix.6`는 업스트림 `v2.10505.0`에 아래 세 동작 수정만 누적한 판본입니다.
 
-| 구분 | 업스트림 `v2.10505.0` | 이 fork `v2.10505.1-panicfix.5` |
+| 구분 | 업스트림 `v2.10505.0` | 이 fork `v2.10505.1-panicfix.6` |
 |---|---|---|
 | 기반 DuckDB | `v1.5.5` | 동일 |
 | Go bindings | `v0.10505.0` | 동일 |
@@ -21,8 +21,10 @@
 | panic 이후 context interrupter | 정리 코드에 도달하지 못하면 goroutine이 남을 수 있음 | `defer`에서 종료 신호를 보내고 goroutine 종료까지 대기 |
 | `TIMESTAMP`/`TIMESTAMPTZ` infinity 재입력 | 조회된 infinity `time.Time`을 다시 parameter/Appender로 쓰면 유한 연도 범위 검사에서 거부될 수 있음 | 조회값 왕복과 명시적 `TimestampPosInfinity`/`TimestampNegInfinity` 입력을 보존 |
 | `TIMESTAMP_S`/`TIMESTAMP_MS`/`TIMESTAMP_NS` | 별도 명시적 infinity marker 없음 | marker를 의도적으로 거부하여 같은 `time.Time` instant를 유한값으로 유지 |
+| 논리 타입 alias(`Stmt.ColumnTypeInfo`) | alias를 버려 JSON 결과 컬럼과 일반 `VARCHAR`가 구별되지 않음 | `TypeInfo.Alias()`로 노출(LIST·ARRAY·STRUCT·MAP·UNION 안쪽 포함) |
+| alias가 있는 `TypeInfo`를 DuckDB에 다시 넘길 때 | alias가 사라져 일반 `VARCHAR`로 동작 | alias를 되살림. JSON이면 쓰는 값을 `encoding/json`으로 marshal |
 
-전체 순변경은 [태그 비교](https://github.com/hellower/duckdb-go/compare/v2.10505.0...v2.10505.1-panicfix.5) 기준 **5 commits, 6 files, +244/-11 lines**입니다. DuckDB 엔진, bindings, `go.mod`, `go.sum`은 바꾸지 않았습니다.
+전체 순변경은 [태그 비교](https://github.com/hellower/duckdb-go/compare/v2.10505.0...v2.10505.1-panicfix.6) 기준 **8 commits, 11 files, +551/-28 lines**입니다. DuckDB 엔진, bindings, `go.mod`, `go.sum`은 바꾸지 않았습니다.
 
 ### 수정 1: panic 뒤에 남는 interrupter goroutine 종료
 
@@ -35,7 +37,7 @@ fork는 정리 동작을 `defer`로 옮겨 다음 계약을 보장합니다.
 - interrupter goroutine이 실제로 끝날 때까지 기다린 뒤 연결 사용권을 반환합니다.
 - 회귀 테스트는 cancel 전 panic과 cancel 후 panic을 각각 검증합니다.
 
-이 수정의 업스트림 제안은 [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182)입니다. 2026-09-20 확인 기준 아직 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
+이 수정의 업스트림 제안은 [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182)입니다. 2026-09-22 확인 기준 아직 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
 
 ### 수정 2: timestamp infinity의 손실 없는 쓰기/왕복
 
@@ -67,6 +69,29 @@ Appender에도 같은 marker를 전달할 수 있습니다.
 err := appender.AppendRow(duckdb.TimestampNegInfinity)
 ```
 
+### 수정 3: 논리 타입 alias 보존
+
+DuckDB는 `JSON`을 `VARCHAR` 저장 위에 alias를 붙인 논리 타입으로 표현합니다. prepared statement 결과 메타데이터는 C API로 그 alias를 이미 제공하지만, 업스트림 `newTypeInfoFromLogicalType`은 `TypeInfo`를 만들면서 alias를 버립니다. 그래서 `Stmt.ColumnTypeInfo`만으로는 JSON 결과 컬럼과 일반 `VARCHAR` 결과 컬럼을 구별할 수 없습니다.
+
+fork는 다음 계약을 보장합니다.
+
+- `TypeInfo` 인터페이스에 `Alias()`를 추가합니다. alias가 없으면 빈 문자열을 반환합니다.
+- `Stmt.ColumnTypeInfo`가 LIST·ARRAY·STRUCT·MAP·UNION 안쪽의 alias까지 보존합니다.
+- `TypeInfo`를 다시 DuckDB 논리 타입으로 만들 때 alias를 되살립니다.
+- 지원하지 않는 자식 타입(예: `BIGNUM`) 때문에 중첩 논리 타입 생성이 NULL을 돌려주면 alias 재적용을 건너뜁니다. `duckdb_logical_type_set_alias`는 NULL을 검사하지 않으므로, 이 가드가 없으면 프로세스가 SIGSEGV로 죽습니다.
+
+alias는 DuckDB에서 얻은 `TypeInfo`에만 붙습니다. `New*Info`로 만든 `TypeInfo`의 `Alias()`는 항상 빈 문자열입니다. 실제로 보이는 값은 `JSON`이나 `INET` 같은 확장 타입 이름이며, `CREATE TYPE`으로 만든 사용자 타입 이름은 보고되지 않습니다.
+
+**동작 변경:** DuckDB에서 얻은 JSON `TypeInfo`를 `NewQueryAppender`나 UDF 타입으로 다시 넘기면, 이제 일반 `VARCHAR`가 아니라 JSON으로 동작합니다.
+
+- Appender 행과 scalar UDF 결과는 `encoding/json`으로 marshal됩니다. Go 문자열 `{"a":1}`은 객체가 아니라 JSON 문자열 `"{\"a\":1}"`로 저장됩니다. JSON 문서를 그대로 쓰려면 `json.RawMessage`나 map·struct를 넘기십시오. `[]byte`는 base64 JSON 문자열이 됩니다.
+- scalar UDF 입력은 `encoding/json`으로 unmarshal됩니다. 예를 들어 JSON 객체는 원문 텍스트가 아니라 `map[string]any`로 들어옵니다.
+
+> [!WARNING]
+> `v2.10505.0` 기반의 한계: `SetChunkValue`와 `SetRowValue`(`Row.SetRowValue` 포함, row 기반 table UDF가 쓰는 경로)는 JSON alias를 무시하고 문자열을 그대로 쓰며, `VARCHAR`·JSON 열에 `nil`을 쓰면 panic합니다. `DataChunk.SetValue`는 Appender와 같은 경로라 JSON alias를 따릅니다. 이 fork 이전부터 있던 `v2.10505.0`의 동작이고, 업스트림은 이후 [`6bee668`](https://github.com/duckdb/duckdb-go/commit/6bee668f2e3b21249e54443d89e09b7502915181)(쓰기 디스패치 단일화)에서 고쳤습니다. 그래서 이 fork에는 업스트림 PR의 table UDF JSON 테스트를 싣지 않았습니다.
+
+이 수정의 업스트림 제안은 [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184)입니다. 2026-09-22 확인 기준 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
+
 ### 태그 계보
 
 모든 `panicfix` 태그는 업스트림 `v2.10505.0`에서 갈라진 누적 태그입니다.
@@ -77,9 +102,12 @@ err := appender.AppendRow(duckdb.TimestampNegInfinity)
 | `v2.10505.1-panicfix.2` | microsecond timestamp infinity 쓰기 보존의 최초 구현 | 중간 태그 |
 | `v2.10505.1-panicfix.3` | 모든 timestamp 정밀도로 판정 범위를 넓힌 중간 설계 | 중간 태그 |
 | `v2.10505.1-panicfix.4` | 정밀도별 native sentinel 왕복을 추가한 중간 설계 | 중간 태그 |
-| `v2.10505.1-panicfix.5` | 명시적 protocol marker를 도입하고 유한값과의 충돌을 제거한 현재 계약 | **권장** |
+| `v2.10505.1-panicfix.5` | 명시적 protocol marker를 도입하고 유한값과의 충돌을 제거한 timestamp 계약 | alias 수정이 필요 없는 기존 사용자만 |
+| `v2.10505.1-panicfix.6` | 논리 타입 alias 보존(`TypeInfo.Alias()`)과 중첩 NULL 논리 타입 가드 | **권장** |
 
-새 소비자는 중간 태그를 순서대로 적용할 필요가 없습니다. 최종 누적 태그인 `v2.10505.1-panicfix.5`만 고정하십시오.
+새 소비자는 중간 태그를 순서대로 적용할 필요가 없습니다. 최종 누적 태그인 `v2.10505.1-panicfix.6`만 고정하십시오.
+
+`panicfix.5`와 `panicfix.6` 사이의 `f8eb8fb`(태그 없음)는 alias의 최초 구현으로, 위 NULL 가드가 없습니다. 이 commit을 pseudo-version으로 고정하지 마십시오.
 
 ### Go 모듈에 적용하는 방법
 
@@ -94,10 +122,10 @@ import duckdb "github.com/duckdb/duckdb-go/v2"
 ```mod
 require github.com/duckdb/duckdb-go/v2 v2.10505.0
 
-replace github.com/duckdb/duckdb-go/v2 v2.10505.0 => github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.5
+replace github.com/duckdb/duckdb-go/v2 v2.10505.0 => github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.6
 ```
 
-그다음 `go mod tidy`를 실행하고 `go.sum`에 `github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.5`가 기록됐는지 확인합니다. `main`, branch 이름, commit pseudo-version 대신 위 태그를 사용해야 재현 가능한 빌드가 됩니다.
+그다음 `go mod tidy`를 실행하고 `go.sum`에 `github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.6`이 기록됐는지 확인합니다. `main`, branch 이름, commit pseudo-version 대신 위 태그를 사용해야 재현 가능한 빌드가 됩니다.
 
 ### 검증 범위
 
@@ -108,21 +136,25 @@ fork가 추가한 회귀 테스트는 다음을 직접 확인합니다.
 - 명시적 양·음 infinity marker가 `TIMESTAMP`와 `TIMESTAMPTZ`에서 보존되는지
 - 인접한 유한 경계값이 infinity로 오인되지 않는지
 - 더 넓은 정밀도 타입에서 marker가 명시적으로 거부되는지
+- `Stmt.ColumnTypeInfo`가 스칼라와 중첩(LIST·ARRAY·STRUCT·MAP·UNION) JSON alias, 그리고 빈 alias를 보고하고, `TypeInfo → 논리 타입 → TypeInfo` 왕복에서 유지하는지
+- JSON `ColumnTypeInfo`로 만든 query appender가 JSON 열의 table appender와 같은 값을 저장하는지
+- scalar UDF의 JSON 입력이 unmarshal되고 결과가 marshal되는지
+- 지원하지 않는 자식을 가진 alias 중첩 타입이 NULL 논리 타입을 DuckDB에 넘기지 않는지
 
 태그 자체를 확인하려면 다음 표적 테스트를 실행합니다.
 
 ```sh
-git checkout v2.10505.1-panicfix.5
-go test -count=1 -run '^(TestRunWithCtxInterrupt_|TestGetTSTicksTimestampInfinity|TestTimestampInfinity)' ./...
+git checkout v2.10505.1-panicfix.6
+go test -count=1 -run '^(TestRunWithCtxInterrupt_|TestGetTSTicksTimestampInfinity|TestTimestampInfinity|TestPreparedStatementColumnTypeInfoAliases|TestTypeInfoAliasWithUnsupportedChild|TestQueryAppenderColumnTypeInfoJSON|TestJSONScalarUDF)' ./...
 ```
 
 ### fork 제거 조건
 
 이 fork는 영구적인 독자 배포판을 목표로 하지 않습니다. 아래 조건을 모두 만족하면 `replace`를 제거하고 업스트림 정식 태그로 복귀합니다.
 
-1. 두 수정과 동등한 구현이 업스트림에 merge됩니다.
+1. 세 수정과 동등한 구현이 업스트림에 merge됩니다.
 2. 그 구현이 포함된 안정 태그가 발행됩니다.
-3. GooseDB의 parameter binding, Appender, COPY BINARY timestamp infinity 회귀 테스트가 그 태그에서 통과합니다.
+3. GooseDB의 parameter binding, Appender, COPY BINARY timestamp infinity 회귀 테스트와 JSON 결과 컬럼(alias) 판별 테스트가 그 태그에서 통과합니다.
 4. `go.mod`의 `replace` 제거와 함께 정적 DuckDB bindings/번들 좌표의 호환성을 다시 검증합니다.
 
 위 조건 전에는 “업스트림 `main`에 코드가 보인다”는 사실만으로 이 fork를 제거하지 않습니다. 소비자는 commit이 아니라 재현 가능한 정식 태그와 전체 런타임 검증을 기준으로 전환해야 합니다.
