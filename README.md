@@ -3,17 +3,19 @@
 > [!IMPORTANT]
 > **이 저장소는 [`duckdb/duckdb-go`](https://github.com/duckdb/duckdb-go)의 일반 배포용 미러가 아니라, GooseDB가 필요한 미출시 수정만 고정해서 사용하는 임시 fork입니다.**
 >
-> GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.6`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
+> GooseDB의 현재 기준 버전은 **`v2.10505.1-panicfix.7`**이며, 비교 기준은 업스트림의 **`v2.10505.0`**입니다. `main` 브랜치는 업스트림 동기화 브랜치가 아니므로 의존성으로 사용하지 마십시오. 반드시 태그를 고정하고, Go 소스의 import 경로는 계속 `github.com/duckdb/duckdb-go/v2`를 사용해야 합니다.
 >
-> **업스트림 제출 PR: [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182) — `fix: stop the interrupter goroutine when the wrapped call panics`, [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184) — `Preserve logical type aliases in TypeInfo`** (2026-09-22 확인 기준 둘 다 open)
+> **업스트림 제출 PR: [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182) — `fix: stop the interrupter goroutine when the wrapped call panics`(open), [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184) — `Preserve logical type aliases in TypeInfo`(2026-09-22 merge, 정식 태그 미포함)** (2026-09-25 확인 기준)
+>
+> **업스트림 이슈: [`duckdb/duckdb-go#185`](https://github.com/duckdb/duckdb-go/issues/185) — 닫지 않은 준비문이 `DB.Close` 뒤에도 DB를 열어 둔다**(open, 수정 4의 원인 보고. PR은 아직 제출하지 않음)
 
 ## GooseDB fork 안내
 
 ### 한눈에 보는 차이
 
-이 fork의 권장 태그 `v2.10505.1-panicfix.6`는 업스트림 `v2.10505.0`에 아래 세 동작 수정만 누적한 판본입니다.
+이 fork의 권장 태그 `v2.10505.1-panicfix.7`는 업스트림 `v2.10505.0`에 아래 네 동작 수정만 누적한 판본입니다.
 
-| 구분 | 업스트림 `v2.10505.0` | 이 fork `v2.10505.1-panicfix.6` |
+| 구분 | 업스트림 `v2.10505.0` | 이 fork `v2.10505.1-panicfix.7` |
 |---|---|---|
 | 기반 DuckDB | `v1.5.5` | 동일 |
 | Go bindings | `v0.10505.0` | 동일 |
@@ -23,8 +25,9 @@
 | `TIMESTAMP_S`/`TIMESTAMP_MS`/`TIMESTAMP_NS` | 별도 명시적 infinity marker 없음 | marker를 의도적으로 거부하여 같은 `time.Time` instant를 유한값으로 유지 |
 | 논리 타입 alias(`Stmt.ColumnTypeInfo`) | alias를 버려 JSON 결과 컬럼과 일반 `VARCHAR`가 구별되지 않음 | `TypeInfo.Alias()`로 노출(LIST·ARRAY·STRUCT·MAP·UNION 안쪽 포함) |
 | alias가 있는 `TypeInfo`를 DuckDB에 다시 넘길 때 | alias가 사라져 일반 `VARCHAR`로 동작 | alias를 되살림. JSON이면 쓰는 값을 `encoding/json`으로 marshal |
+| 닫지 않은 준비문이 남은 채 `Conn.Close` | `Disconnect`만 하여 준비문이 DB 인스턴스를 붙잡음. `DB.Close`가 nil을 돌려준 뒤에도 워커 스레드와 **DB 파일 잠금**이 남음 | `Disconnect` 전에 남은 준비문을 파괴. 이후 그 준비문 사용은 닫힌 문장 오류, 다시 닫기는 no-op |
 
-전체 순변경은 [태그 비교](https://github.com/hellower/duckdb-go/compare/v2.10505.0...v2.10505.1-panicfix.6) 기준 **8 commits, 11 files, +551/-28 lines**입니다. DuckDB 엔진, bindings, `go.mod`, `go.sum`은 바꾸지 않았습니다.
+전체 순변경은 [태그 비교](https://github.com/hellower/duckdb-go/compare/v2.10505.0...v2.10505.1-panicfix.7) 기준 **9 commits, 13 files, +926/-29 lines**입니다. DuckDB 엔진, bindings, `go.mod`, `go.sum`은 바꾸지 않았습니다.
 
 ### 수정 1: panic 뒤에 남는 interrupter goroutine 종료
 
@@ -37,7 +40,7 @@ fork는 정리 동작을 `defer`로 옮겨 다음 계약을 보장합니다.
 - interrupter goroutine이 실제로 끝날 때까지 기다린 뒤 연결 사용권을 반환합니다.
 - 회귀 테스트는 cancel 전 panic과 cancel 후 panic을 각각 검증합니다.
 
-이 수정의 업스트림 제안은 [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182)입니다. 2026-09-22 확인 기준 아직 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
+이 수정의 업스트림 제안은 [`duckdb/duckdb-go#182`](https://github.com/duckdb/duckdb-go/pull/182)입니다. 2026-09-25 확인 기준 아직 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
 
 ### 수정 2: timestamp infinity의 손실 없는 쓰기/왕복
 
@@ -90,7 +93,21 @@ alias는 DuckDB에서 얻은 `TypeInfo`에만 붙습니다. `New*Info`로 만든
 > [!WARNING]
 > `v2.10505.0` 기반의 한계: `SetChunkValue`와 `SetRowValue`(`Row.SetRowValue` 포함, row 기반 table UDF가 쓰는 경로)는 JSON alias를 무시하고 문자열을 그대로 쓰며, `VARCHAR`·JSON 열에 `nil`을 쓰면 panic합니다. `DataChunk.SetValue`는 Appender와 같은 경로라 JSON alias를 따릅니다. 이 fork 이전부터 있던 `v2.10505.0`의 동작이고, 업스트림은 이후 [`6bee668`](https://github.com/duckdb/duckdb-go/commit/6bee668f2e3b21249e54443d89e09b7502915181)(쓰기 디스패치 단일화)에서 고쳤습니다. 그래서 이 fork에는 업스트림 PR의 table UDF JSON 테스트를 싣지 않았습니다.
 
-이 수정의 업스트림 제안은 [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184)입니다. 2026-09-22 확인 기준 open 상태이므로, 업스트림의 정식 안정 태그에는 포함되지 않았습니다.
+이 수정의 업스트림 제안은 [`duckdb/duckdb-go#184`](https://github.com/duckdb/duckdb-go/pull/184)입니다. 2026-09-22에 업스트림 `main`에 merge됐지만, 2026-09-25 확인 기준 이를 포함한 정식 태그는 아직 없습니다.
+
+### 수정 4: `Conn.Close`가 남은 준비문을 파괴
+
+`database/sql`은 `sql.Conn.PrepareContext`처럼 한 연결에서 만든 준비문을 추적하지 않습니다(`driverConn.prepareLocked`: "No need to manage open statements if there is a single connection grabber."). 대신 `driver.Conn.Close` 계약("Close invalidates and potentially stops any current prepared statements and transactions")에 기댑니다. 업스트림 `Conn.Close`는 `duckdb_disconnect`만 호출하므로, 닫지 않은 준비문의 native 핸들이 `ClientContext`를 거쳐 `DatabaseInstance`를 계속 붙잡습니다. 그 결과 `DB.Close()`가 nil을 돌려준 뒤에도 인스턴스가 살아 있어 워커 스레드와 DB 파일 잠금이 남고, 다른 프로세스는 `Could not set lock on file … Conflicting lock is held`로 같은 파일을 열지 못합니다(업스트림 `v2.10505.0`에서 독립 재현, [`duckdb/duckdb-go#185`](https://github.com/duckdb/duckdb-go/issues/185)).
+
+fork는 다음 계약을 보장합니다.
+
+- `Conn`은 자기가 준비한 문장을 기록하고, `Stmt.Close`는 그 기록에서 지웁니다.
+- `Conn.Close`는 `Disconnect` **전에** 아직 열린 준비문을 모두 파괴합니다.
+- `Stmt.Close`와 `Conn.Close`가 겹쳐도 같은 준비문을 두 번 파괴하지 않도록 mutex로 직렬화합니다.
+- `Conn.Close`가 파괴한 준비문을 나중에 쓰면 panic이나 해제된 핸들 접근 없이 닫힌 문장 오류를 돌려줍니다. `NumInput`은 -1(개수 모름)을, `Close`는 몇 번을 불러도 nil을 돌려줍니다.
+- 호출자가 직접 닫은 준비문을 다시 닫으면 업스트림과 같이 misuse panic입니다(동작 불변).
+
+이 수정은 업스트림 이슈 [`duckdb/duckdb-go#185`](https://github.com/duckdb/duckdb-go/issues/185)의 원인에 대한 것이며, fork 브랜치 `fix/conn-close-stmts-10505`에 업스트림에 그대로 낼 수 있는 형태로 있습니다. 업스트림 PR은 아직 제출하지 않았습니다.
 
 ### 태그 계보
 
@@ -103,9 +120,10 @@ alias는 DuckDB에서 얻은 `TypeInfo`에만 붙습니다. `New*Info`로 만든
 | `v2.10505.1-panicfix.3` | 모든 timestamp 정밀도로 판정 범위를 넓힌 중간 설계 | 중간 태그 |
 | `v2.10505.1-panicfix.4` | 정밀도별 native sentinel 왕복을 추가한 중간 설계 | 중간 태그 |
 | `v2.10505.1-panicfix.5` | 명시적 protocol marker를 도입하고 유한값과의 충돌을 제거한 timestamp 계약 | alias 수정이 필요 없는 기존 사용자만 |
-| `v2.10505.1-panicfix.6` | 논리 타입 alias 보존(`TypeInfo.Alias()`)과 중첩 NULL 논리 타입 가드 | **권장** |
+| `v2.10505.1-panicfix.6` | 논리 타입 alias 보존(`TypeInfo.Alias()`)과 중첩 NULL 논리 타입 가드 | `Conn.Close` 수정이 필요 없는 기존 사용자만 |
+| `v2.10505.1-panicfix.7` | `Conn.Close`가 남은 준비문을 파괴(DB 인스턴스·파일 잠금 해제) | **권장** |
 
-새 소비자는 중간 태그를 순서대로 적용할 필요가 없습니다. 최종 누적 태그인 `v2.10505.1-panicfix.6`만 고정하십시오.
+새 소비자는 중간 태그를 순서대로 적용할 필요가 없습니다. 최종 누적 태그인 `v2.10505.1-panicfix.7`만 고정하십시오.
 
 `panicfix.5`와 `panicfix.6` 사이의 `f8eb8fb`(태그 없음)는 alias의 최초 구현으로, 위 NULL 가드가 없습니다. 이 commit을 pseudo-version으로 고정하지 마십시오.
 
@@ -122,10 +140,10 @@ import duckdb "github.com/duckdb/duckdb-go/v2"
 ```mod
 require github.com/duckdb/duckdb-go/v2 v2.10505.0
 
-replace github.com/duckdb/duckdb-go/v2 v2.10505.0 => github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.6
+replace github.com/duckdb/duckdb-go/v2 v2.10505.0 => github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.7
 ```
 
-그다음 `go mod tidy`를 실행하고 `go.sum`에 `github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.6`이 기록됐는지 확인합니다. `main`, branch 이름, commit pseudo-version 대신 위 태그를 사용해야 재현 가능한 빌드가 됩니다.
+그다음 `go mod tidy`를 실행하고 `go.sum`에 `github.com/hellower/duckdb-go/v2 v2.10505.1-panicfix.7`이 기록됐는지 확인합니다. `main`, branch 이름, commit pseudo-version 대신 위 태그를 사용해야 재현 가능한 빌드가 됩니다.
 
 ### 검증 범위
 
@@ -140,21 +158,25 @@ fork가 추가한 회귀 테스트는 다음을 직접 확인합니다.
 - JSON `ColumnTypeInfo`로 만든 query appender가 JSON 열의 table appender와 같은 값을 저장하는지
 - scalar UDF의 JSON 입력이 unmarshal되고 결과가 marshal되는지
 - 지원하지 않는 자식을 가진 alias 중첩 타입이 NULL 논리 타입을 DuckDB에 넘기지 않는지
+- 준비문을 남긴 채 `Conn`·`DB`를 닫으면 **다른 프로세스가 같은 DB 파일을 열 수 있고** 워커 스레드가 사라지는지(대조군: 준비문을 먼저 닫은 경우)
+- `Conn.Close` 뒤 그 준비문의 실행·바인드·메타데이터 호출이 닫힌 문장 오류를 돌려주고, `Close`를 두 번 불러도 안전한지
+- 결과 행이 열린 채 연결을 닫아도 결과를 읽고 닫을 수 있는지, 그리고 `Stmt.Close`와 `Conn.Close`를 동시에 불러도 이중 파괴가 없는지(`-race`)
 
 태그 자체를 확인하려면 다음 표적 테스트를 실행합니다.
 
 ```sh
-git checkout v2.10505.1-panicfix.6
-go test -count=1 -run '^(TestRunWithCtxInterrupt_|TestGetTSTicksTimestampInfinity|TestTimestampInfinity|TestPreparedStatementColumnTypeInfoAliases|TestTypeInfoAliasWithUnsupportedChild|TestQueryAppenderColumnTypeInfoJSON|TestJSONScalarUDF)' ./...
+git checkout v2.10505.1-panicfix.7
+go test -count=1 -run '^(TestRunWithCtxInterrupt_|TestGetTSTicksTimestampInfinity|TestTimestampInfinity|TestPreparedStatementColumnTypeInfoAliases|TestTypeInfoAliasWithUnsupportedChild|TestQueryAppenderColumnTypeInfoJSON|TestJSONScalarUDF|TestConnClose)' ./...
+go test -race -count=1 -run '^TestConnClose' .
 ```
 
 ### fork 제거 조건
 
 이 fork는 영구적인 독자 배포판을 목표로 하지 않습니다. 아래 조건을 모두 만족하면 `replace`를 제거하고 업스트림 정식 태그로 복귀합니다.
 
-1. 세 수정과 동등한 구현이 업스트림에 merge됩니다.
+1. 네 수정과 동등한 구현이 업스트림에 merge됩니다.
 2. 그 구현이 포함된 안정 태그가 발행됩니다.
-3. GooseDB의 parameter binding, Appender, COPY BINARY timestamp infinity 회귀 테스트와 JSON 결과 컬럼(alias) 판별 테스트가 그 태그에서 통과합니다.
+3. GooseDB의 parameter binding, Appender, COPY BINARY timestamp infinity 회귀 테스트, JSON 결과 컬럼(alias) 판별 테스트, 준비문을 남긴 채 닫은 DB의 파일 잠금 해제 테스트가 그 태그에서 통과합니다.
 4. `go.mod`의 `replace` 제거와 함께 정적 DuckDB bindings/번들 좌표의 호환성을 다시 검증합니다.
 
 위 조건 전에는 “업스트림 `main`에 코드가 보인다”는 사실만으로 이 fork를 제거하지 않습니다. 소비자는 commit이 아니라 재현 가능한 정식 태그와 전체 런타임 검증을 기준으로 전환해야 합니다.
