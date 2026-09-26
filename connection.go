@@ -124,7 +124,16 @@ func (conn *Conn) PrepareContext(ctx context.Context, query string) (driver.Stmt
 	cleanupCtx := conn.setContext(ctx)
 	defer cleanupCtx()
 
-	return conn.prepareStmts(ctx, query)
+	var prepared *Stmt
+	err := runWithCtxInterrupt(ctx, conn.conn, func(wctx context.Context) error {
+		var prepareErr error
+		prepared, prepareErr = conn.prepareStmts(wctx, query)
+		return prepareErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return prepared, nil
 }
 
 // Prepare returns a prepared statement, bound to this connection.
